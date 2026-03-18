@@ -1,5 +1,11 @@
 import java.util.*;
 
+class InvalidBookingException extends Exception {
+    InvalidBookingException(String message) {
+        super(message);
+    }
+}
+
 class BookingRequest {
     String requestId;
     String roomType;
@@ -21,8 +27,18 @@ class InventoryService {
         return inventory.getOrDefault(roomType, 0) > 0;
     }
 
-    synchronized void decrement(String roomType) {
-        inventory.put(roomType, inventory.get(roomType) - 1);
+    synchronized void decrement(String roomType) throws InvalidBookingException {
+        int count = inventory.getOrDefault(roomType, 0);
+        if (count <= 0) {
+            throw new InvalidBookingException("Inventory cannot be decremented below zero for room type: " + roomType);
+        }
+        inventory.put(roomType, count - 1);
+    }
+
+    synchronized void validateRoomType(String roomType) throws InvalidBookingException {
+        if (!inventory.containsKey(roomType)) {
+            throw new InvalidBookingException("Invalid room type: " + roomType);
+        }
     }
 }
 
@@ -57,13 +73,19 @@ class BookingService {
     void processRequests() {
         while (!queue.isEmpty()) {
             BookingRequest request = queue.poll();
-            processSingleRequest(request);
+            try {
+                processSingleRequest(request);
+            } catch (InvalidBookingException e) {
+                System.out.println("Booking failed for " + request.requestId + ": " + e.getMessage());
+            }
         }
     }
 
-    private synchronized void processSingleRequest(BookingRequest request) {
+    private synchronized void processSingleRequest(BookingRequest request) throws InvalidBookingException {
+        inventoryService.validateRoomType(request.roomType);
+
         if (!inventoryService.isAvailable(request.roomType)) {
-            return;
+            throw new InvalidBookingException("No available rooms for type: " + request.roomType);
         }
 
         String roomId = generateUniqueRoomId();
@@ -118,39 +140,25 @@ class BookingReportService {
             System.out.println("Reservation: " + b.reservationId + ", Room Type: " + b.roomType + ", Room ID: " + b.roomId);
         }
     }
-
-    void printSummary() {
-        List<Booking> history = bookingService.getBookingHistory();
-        Map<String, Integer> roomTypeCount = new HashMap<>();
-        for (Booking b : history) {
-            roomTypeCount.put(b.roomType, roomTypeCount.getOrDefault(b.roomType, 0) + 1);
-        }
-        System.out.println("Booking Summary:");
-        for (String type : roomTypeCount.keySet()) {
-            System.out.println(type + ": " + roomTypeCount.get(type));
-        }
-    }
 }
 
-public class UC8 {
+public class UC9 {
     public static void main(String[] args) {
         Map<String, Integer> initialInventory = new HashMap<>();
         initialInventory.put("DELUXE", 2);
-        initialInventory.put("STANDARD", 3);
+        initialInventory.put("STANDARD", 1);
 
         InventoryService inventoryService = new InventoryService(initialInventory);
         BookingService bookingService = new BookingService(inventoryService);
 
         bookingService.addRequest(new BookingRequest("REQ1", "DELUXE"));
         bookingService.addRequest(new BookingRequest("REQ2", "STANDARD"));
-        bookingService.addRequest(new BookingRequest("REQ3", "DELUXE"));
+        bookingService.addRequest(new BookingRequest("REQ3", "INVALID_TYPE"));
+        bookingService.addRequest(new BookingRequest("REQ4", "STANDARD"));
 
         bookingService.processRequests();
 
         BookingReportService reportService = new BookingReportService(bookingService);
-
         reportService.printAllBookings();
-        reportService.printSummary();
     }
-
 }
